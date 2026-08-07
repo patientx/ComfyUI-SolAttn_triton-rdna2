@@ -173,8 +173,8 @@ def _ineligible(q, k, mask, dim_head, min_tokens):
         return f"kernel import failed: {_IMPORT_ERROR}"
     if q.device.type != "cuda":
         return "not cuda"
-    if q.dtype != torch.bfloat16:
-        return f"dtype {q.dtype} (kernel is bf16-only)"
+    if q.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        return f"dtype {q.dtype} unsupported"
     if dim_head != HEAD_DIM:
         return f"head_dim {dim_head} != 128"
     if mask is not None:
@@ -210,6 +210,15 @@ def _run(q, k, v, heads, skip_reshape, skip_output_reshape, scale,
 
     # No contiguous() here: the kernels take strides, so H3's interleaved qkv
     # views go in without copies.
+    # Kernel is bf16-only internally; cast just for this op rather than
+    # requiring the whole model to run in bf16. Sage already does the
+    # analogous thing here (int8 QK / fp16 PV) regardless of the model's
+    # manual-cast dtype, so this isn't a new category of precision loss
+    # for this pipeline.
+    in_dtype = qs.dtype
+    if in_dtype != torch.bfloat16:
+        qs, ks, vs = qs.to(torch.bfloat16), ks.to(torch.bfloat16), vs.to(torch.bfloat16)
+
     extra = {"int8_pv": int8_pv} if int8_qk else {}
     kernel = _sol_attn_int8_kernel if int8_qk else _sol_attn_kernel
     out = kernel(
@@ -217,6 +226,8 @@ def _run(q, k, v, heads, skip_reshape, skip_output_reshape, scale,
         scale=scale, tau=tau, sink_blocks=sink_blocks, sink_q=sink_q,
         use_tma=use_tma, **extra,
     )  # BTHD
+    if out.dtype != in_dtype:
+        out = out.to(in_dtype)
     _stats["sparse"] += 1
     if verbose:
         mode = "int8" if int8_qk else "bf16"
