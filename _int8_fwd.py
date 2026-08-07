@@ -9,10 +9,8 @@ nothing.
 import torch
 import triton
 import triton.language as tl
-try:
-    from triton.tools.tensor_descriptor import TensorDescriptor
-except Exception:
-    TensorDescriptor = None
+
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from ._autotune_log import AUTOTUNE_EXTRAS as _AUTOTUNE_EXTRAS, wrap as _wrap_autotune
 from ._fused_prep import fused_preprocess
