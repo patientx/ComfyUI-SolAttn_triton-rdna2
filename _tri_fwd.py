@@ -5,34 +5,25 @@ TensorDescriptor loads (TMA on SM90+), which address strided inputs directly, so
 neither path copies q/k/v unless the layout breaks TMA's alignment rules.
 """
 
-import logging
-
 import torch
 import triton
 import triton.language as tl
-try:
-    from triton.tools.tensor_descriptor import TensorDescriptor
-except Exception:
-    TensorDescriptor = None
+
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from ._autotune_log import AUTOTUNE_EXTRAS as _AUTOTUNE_EXTRAS, wrap as _wrap_autotune
 from ._preprocess import prepare
 
-_logged_no_descriptor = False
-
 
 def _has_tma(device):
-    # TensorDescriptor arrived in Triton 3.3; older installs run the pointer twin.
-    if torch.cuda.get_device_capability(device)[0] < 9:
+    if torch.version.hip is not None:
+        # ROCm torch's get_device_capability() reflects the gfx arch number,
+        # not a real CUDA SM version, so it can't be used to gate TMA here.
+        # TensorDescriptor/TMA has no AMD backend equivalent; always use the
+        # pointer kernels on ROCm.
         return False
-    if TensorDescriptor is None:
-        global _logged_no_descriptor
-        if not _logged_no_descriptor:
-            _logged_no_descriptor = True
-            logging.info("[sol_attn] this Triton has no TensorDescriptor; using the "
-                         "pointer kernels. Update Triton to use TMA on this GPU.")
-        return False
-    return True
+
+    return torch.cuda.get_device_capability(device)[0] >= 9
 
 
 BLOCK = 64
